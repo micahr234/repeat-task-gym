@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+      - run: uv venv --python ${{ matrix.python }}
+      - run: uv pip install --python .venv/bin/python -e ".[dev]"
+      - run: .venv/bin/pyright
+      - run: .venv/bin/pytest -q
+      - run: .venv/bin/python -m build
+      - run: .venv/bin/python -m twine check dist/*

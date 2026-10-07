@@ -1,0 +1,4 @@
+include CHANGELOG.md CONTRIBUTING.md
+recursive-include examples *.ipynb
+recursive-include tests *.py
+recursive-include scripts *.sh

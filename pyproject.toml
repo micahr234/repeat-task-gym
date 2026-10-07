@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repeat-task-gym"
+version = "0.1.0"
+description = "Repeat Gymnasium episodes within a task using the standard Gymnasium API"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+]
+dependencies = ["gymnasium>=1.0"]
+
+[project.urls]
+Homepage = "https://github.com/micahr234/repeat-task-gym"
+Repository = "https://github.com/micahr234/repeat-task-gym"
+Issues = "https://github.com/micahr234/repeat-task-gym/issues"
+
+[project.optional-dependencies]
+examples = ["jupyter>=1.1", "ipykernel>=6.29"]
+dev = ["pytest>=8", "pyright>=1.1.400", "build>=1.2", "twine>=6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+repeat_task_gym = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests", "examples"]
+extraPaths = ["src"]
