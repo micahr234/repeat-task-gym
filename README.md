@@ -1,14 +1,25 @@
 # Repeat Task Gym
 
-`repeat-task-gym` wraps a Gymnasium environment so an agent can experience
-multiple episodes of the same task before the task ends. It takes a
-`gymnasium.Env` and returns a `gymnasium.Env` with the usual `reset()` and
-five-value `step()` API.
+`repeat-task-gym` concatenates episodes of an existing Gymnasium environment
+into one task. This lets us measure learning progress with meta-RL using many
+existing environments with little additional code.
 
-The episode repetition and task seeding follow
-[mouse-gym](https://github.com/micahr234/mouse-gym). This package focuses on that
-wrapper: use Gymnasium's existing wrappers for reward transforms, statistics,
-and vector environments.
+**Steps make up an episode. Episodes make up a task.** The question is whether
+experience in an early episode helps the agent improve in later episodes.
+
+Imagine commuting to a new workplace. You try different routes on the first
+few mornings, then use what you learned to arrive on time. Each commute is an
+episode; the succession of commutes is a task. One journey shows how you did
+that day. The task shows whether you learned. The
+[first notebook](examples/00_episodes_to_tasks.ipynb) models this situation.
+
+## From an MDP to a partially observable learning task
+
+An MDP with an unknown goal, map, or dynamics becomes a POMDP learning problem
+when the agent must infer that information from experience. Repeating episodes
+of the same instance lets it discover and reuse that information. Existing
+POMDP environments can also be repeated. The wrapper preserves the original
+observations; the environment determines what remains hidden and learnable.
 
 ## Install
 
@@ -16,24 +27,8 @@ Requires Python 3.11+ and Gymnasium 1.0+.
 
 ```bash
 pip install -e .
+pip install -e ".[examples]"  # Include notebook dependencies.
 ```
-
-To include Jupyter and the Python kernel for running the example notebooks:
-
-```bash
-pip install -e ".[examples]"
-```
-
-For development, with notebook support:
-
-```bash
-bash scripts/install.sh
-source .venv/bin/activate
-```
-
-The script installs the package, development tools, and example dependencies.
-It uses Python 3.14 by default; set `REPEAT_TASK_PYTHON=3.11` to choose another
-supported interpreter. Free-threaded Python is not required.
 
 ## Quick start
 
@@ -41,153 +36,103 @@ supported interpreter. Free-threaded Python is not required.
 import gymnasium as gym
 from repeat_task_gym import RepeatTaskEnv
 
-env = RepeatTaskEnv(gym.make("CartPole-v1"), max_task_episodes=5)
-observation, info = env.reset(seed=0)
-env.action_space.seed(0)
-
+env = RepeatTaskEnv(
+    gym.make("CartPole-v1", max_episode_steps=50), max_task_episodes=3
+)
 try:
-    for _ in range(1000):
+    observation, info = env.reset()
+    episode_return = 0.0
+    while True:
         observation, reward, terminated, truncated, info = env.step(
             env.action_space.sample()
         )
-        state = observation["observation"]
-        episode_done = observation["episode_done"]
+        episode_return += reward
+        if observation["episode_terminated"] or observation["episode_truncated"]:
+            print("Episode return:", episode_return)
+            episode_return = 0.0
         if terminated or truncated:
-            observation, info = env.reset()
+            break
 finally:
     env.close()
 ```
 
-## Episode and task boundaries
+This random policy traces three episodes of one task; it does not learn.
 
-One outer Gymnasium episode is a **task** containing one or more inner episodes.
-The standard `terminated` and `truncated` outputs describe the task:
+## Using the wrapper
 
-| Output | Meaning |
+`step()` returns the usual Gymnasium tuple:
+
+```python
+observation, reward, terminated, truncated, info = env.step(action)
+```
+
+The **episode flags are inside the observation dictionary**, alongside the
+original environment observation at `observation["observation"]`.
+The **task flags are the separate `terminated` and `truncated` return values**.
+
+| Value | Meaning |
 | --- | --- |
-| `terminated=True` | The `terminate_task` callback ended the task. |
-| `truncated=True` | `max_task_episodes` episodes completed. |
-| Both `False` | Continue stepping within the current task. |
+| `observation["episode_terminated"]` | The underlying episode terminated. |
+| `observation["episode_truncated"]` | The underlying episode truncated. |
+| `terminated` | The task's termination callback fired. |
+| `truncated` | The task reached `max_task_episodes`. |
 
-Each observation is a Gymnasium `Dict` with two fields:
+Keep stepping between episodes. An episode-ending step returns its final
+observation. If the task continues, the following step returns a reset frame
+with zero reward and ignores its action. Call `reset()` before stepping and
+after the task ends.
 
-| Field | Space | Meaning |
-| --- | --- | --- |
-| `observation` | Original observation space | The original observation, including nested dictionaries or tuples. |
-| `episode_done` | `Discrete(3)` | `0`: running/reset, `1`: episode terminated, `2`: episode truncated. |
+`max_task_episodes=0` allows unlimited episodes. An optional `terminate_task`
+callback can end the task at an episode boundary. See
+[`RepeatTaskEnv`](src/repeat_task_gym/wrapper.py) for callback arguments and reset options.
 
-If the underlying env sets both flags, `episode_done=1` takes precedence, as in
-mouse-gym. This encoding intentionally does not distinguish termination alone
-from simultaneous termination and truncation. Rewards, actions, and `info`
-keep their original meaning; the action space is unchanged.
+## Resets
 
-An episode-end step returns the **final observation and reward** of that
-episode. If the task continues, the next `step(action)` resets the underlying
-environment and returns its initial observation, `episode_done=0`, reward
-`0.0`, and both task flags `False`. That reset-frame action is ignored. This
-preserves mouse-gym's separate terminal and reset frames.
-
-For two one-step episodes and `max_task_episodes=2`:
-
-| Call | Observation | `episode_done` | `terminated` | `truncated` |
-| --- | --- | --- | --- | --- |
-| `reset()` | First episode's initial state | 0 | - | - |
-| `step(action)` | First episode's final state | 1 | False | False |
-| `step(action)` | Second episode's initial state | 0 | False | False |
-| `step(action)` | Second episode's final state | 1 | False | True |
-| `reset()` | Next task's initial state | 0 | - | - |
-
-Call `reset()` before the first step and after either task flag is true.
-Stepping without doing so raises `gymnasium.error.ResetNeeded`. A public
-`reset()` always starts a new task, including when called partway through one.
-
-## Task settings
+Every public `reset()` starts a new task. In every mode, `reset(seed=42)`
+reseeds one wrapper RNG and draws a seed to pass to the environment.
+`reset()` and `reset(seed=None)` leave the RNG running. The mode controls when
+to draw again; otherwise, each episode reuses the last drawn seed.
 
 ```python
-env = RepeatTaskEnv(
-    existing_env,
-    max_task_episodes=5,
-    terminate_task=None,
-    episode_reset_options=None,
-    task_reset_options=None,
-)
+# Draw a seed for each episode (default).
+env = RepeatTaskEnv(base_env, episode_seed_mode="per_episode")
+env.reset(seed=42)
+# Keep stepping through the task, then:
+env.reset()  # Draw the next seed from the same RNG for this task's first episode.
+
+# Reuse one seed within each task; draw a fresh seed for the next task.
+env = RepeatTaskEnv(base_env, episode_seed_mode="per_task")
+env.reset(seed=42)
+# Keep stepping through the task, then:
+env.reset()  # Draw the next task's seed.
+
+# Reuse one seed across episodes and tasks until explicitly reseeded.
+env = RepeatTaskEnv(base_env, episode_seed_mode="constant")
+env.reset(seed=42)
+env.reset()         # Start a new task with the same seed.
+env.reset(seed=7)   # Restart the generator and choose a new constant seed.
 ```
 
-`max_task_episodes=0` (the default) allows unlimited episodes. A task can still
-end through `terminate_task`. The predicate runs only on episode-end steps:
+In `"per_episode"` mode, extra episodes consume extra draws, affecting the next
+task's seed too.
 
-```python
-def solved(*, reward, done, **kwargs):
-    return done == 1 and reward > 0
+`episode_reset_options` supplies default options for the base environment.
+Public `reset(options=...)` merges over these defaults for the task's first
+episode only; later episodes use the defaults. Supply seeds through
+`reset(seed=...)`; a `seed` entry in `episode_reset_options` is rejected.
 
-env = RepeatTaskEnv(
-    gym.make("FrozenLake-v1", is_slippery=False),
-    max_task_episodes=10,
-    terminate_task=solved,
-)
-```
-
-The callback receives `step_index`, `episode_index`, `state`, `action`,
-`reward`, `done`, and `next_state`, matching mouse-gym's task callback.
-`episode_index` starts at zero, `step_index` at one on the first actual step;
-`state` and `next_state` are original observations, and `done` is the episode
-code. `reward` is the current step's reward, not the episode return. If the
-predicate fires on the last allowed episode, task termination takes precedence
-and `truncated=False`.
-
-## Seeding and resets
-
-`reset(seed=123)` initializes a seed stream and draws a seed for the first task.
-Each subsequent public `reset()` draws the next task seed. Repeating
-`reset(seed=123)` reproduces the task sequence for the same actions and a
-deterministic underlying environment. Action sampling is independently seeded
-with `env.action_space.seed(...)`.
-
-Internal episode resets pass `seed=None`: the underlying RNG continues
-within the task. Environments that generate a task instance only when given an
-explicit seed retain it across those resets. The wrapper cannot impose this
-behavior on environments that regenerate their task on every reset.
-
-Every underlying reset receives a fresh dictionary of `episode_reset_options`.
-At task starts, `task_reset_options` are overlaid, then options supplied to
-`reset(options=...)`. Task-start options are not reused for internal episode
-resets. These copies are shallow; option values should be treated as immutable.
-
-## Gymnasium composition
-
-Set up the base environment and episode wrappers before passing it in.
-`TimeLimit` inside `RepeatTaskEnv` limits each inner episode; outside it, it
-limits the task, including reset frames. Similarly, `RecordEpisodeStatistics`
-inside records inner episodes and outside records tasks. When using both,
-set a different `stats_key` on the outer wrapper (for example, `"task"`) to
-avoid colliding with the inner `info["episode"]`. Apply any automatic task-reset
-wrapper outside `RepeatTaskEnv`.
-
-The wrapper delegates rendering, closing, metadata, and the action space to
-the wrapped environment. Standard `SyncVectorEnv` or `AsyncVectorEnv` can
-batch independently constructed wrappers. `FlattenObservation` can flatten
-the augmented observation when supported by the original observation space.
-See the [Gymnasium wrapper documentation](https://gymnasium.farama.org/api/wrappers/)
-for composition conventions.
+Reset behavior and supported options depend on the base environment. Carefully
+verify which conditions stay fixed or change in your configuration.
 
 ## Examples
 
-The numbered notebooks in [`examples/`](examples/) cover:
+Run `jupyter lab examples/` after installing the examples extra.
 
-- **01 - Random rollout:** inspect episode boundaries and standard task resets.
-- **02 - Task termination:** end a task on success or its episode budget.
-- **03 - RNG seeding control:** reproduce task sequences with independent action seeds.
-- **04 - Gymnasium composition:** collect task statistics, flatten observations, and vectorize.
+- [00 — Episodes to tasks](examples/00_episodes_to_tasks.ipynb): learning within one task.
+- [01 — Random rollout](examples/01_random_rollout.ipynb): inputs, outputs, and boundaries.
+- [02 — Task termination](examples/02_task_termination.ipynb): success conditions and episode budgets.
+- [03 — Seeding](examples/03_rng_seeding_control.ipynb): seed modes and reset options. Requires Python 3.12+.
+- [04 — Composition](examples/04_gymnasium_composition.ipynb): statistics, flattening, and vectorization.
 
-Install the `examples` extra, then run `jupyter lab examples/` from the
-environment where the package is installed.
-
-## Development
-
-The repository follows mouse-gym's `src/`, `tests/`, `examples/`, and
-`scripts/` layout. See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and
-[CHANGELOG.md](CHANGELOG.md) for changes.
-
-## License
-
-GNU General Public License v3.0 or later, matching mouse-gym. See [LICENSE](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and [CHANGELOG.md](CHANGELOG.md)
+for changes. Licensed under [GPL-3.0-or-later](LICENSE).

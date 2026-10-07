@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
       - run: uv venv --python ${{ matrix.python }}
-      - run: uv pip install --python .venv/bin/python -e ".[dev]"
+      - run: uv pip install --python .venv/bin/python -e ".[dev,examples]"
       - run: .venv/bin/pyright
       - run: .venv/bin/pytest -q
       - run: .venv/bin/python -m build
