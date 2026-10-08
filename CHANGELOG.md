@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Call `reward_transform` and `terminate_task` on every `step()`, including
+  mid-episode steps and the reset frame between episodes. `reward_transform`
+  replaces the step reward before `terminate_task` sees it. A true predicate
+  ends the task on that step. The episode budget is still checked only when
+  an episode ends.
 - Copy Procedural FrozenLake info in the seeding example so nested map metadata
   is independent across resets and steps, keeping Gymnasium's checker enabled.
 - Control episode reset seeds with `episode_seed_mode`: `"per_episode"`

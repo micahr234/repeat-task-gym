@@ -79,11 +79,14 @@ The **task flags are the separate `terminated` and `truncated` return values**.
 
 Keep stepping between episodes. An episode-ending step returns its final
 observation. If the task continues, the following step returns a reset frame
-with zero reward and ignores its action. Call `reset()` before stepping and
-after the task ends.
+and ignores its action. Call `reset()` before stepping and after the task ends.
 
-`max_task_episodes=0` allows unlimited episodes. An optional `terminate_task`
-callback can end the task at an episode boundary. See
+`max_task_episodes=0` allows unlimited episodes. That budget is checked only
+when an episode ends. `reward_transform` and `terminate_task` run on every
+`step()`, including mid-episode steps and the reset frame between episodes.
+They are not called from `reset()`. `reward_transform` replaces the step
+reward, and `terminate_task` sees that reward. A true result ends the task on
+that step. A reset frame starts at reward 0 with `action=None`. See
 [`RepeatTaskEnv`](src/repeat_task_gym/wrapper.py) for callback arguments and reset options.
 
 ## Resets

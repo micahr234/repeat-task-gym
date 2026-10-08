@@ -140,36 +140,92 @@ def test_single_episode_task_has_no_reset_frame_before_boundary():
 
 @pytest.mark.parametrize("budget", [0, 2, 5])
 @pytest.mark.parametrize("terminated,truncated", [(True, False), (False, True), (True, True)])
-def test_task_predicate_only_runs_at_episode_end_and_is_independent_of_budget(budget, terminated, truncated):
-    calls = []
+def test_callbacks_run_every_step_and_budget_is_independent(budget, terminated, truncated):
+    reward_calls = []
+    terminate_calls = []
+
+    def reward_transform(**transition):
+        reward_calls.append(dict(transition))
+        return transition["reward"] + 10.0
 
     def terminate_task(**transition):
-        calls.append(transition)
-        return transition["episode_index"] == 1
+        terminate_calls.append(dict(transition))
+        return transition["episode_index"] == 1 and (
+            transition["episode_terminated"] or transition["episode_truncated"]
+        )
 
     env = RepeatTaskEnv(
         EpisodeEnv(terminated=terminated, truncated=truncated),
-        max_task_episodes=budget, terminate_task=terminate_task,
+        max_task_episodes=budget,
+        reward_transform=reward_transform,
+        terminate_task=terminate_task,
     )
     env.reset()
-    env.step(0)
-    assert calls == []
-    assert env.step(1)[2:4] == (False, False)
-    assert calls == [{
-        "step_index": 2, "episode_index": 0, "state": 1, "action": 1,
-        "reward": 2.0, "episode_terminated": terminated, "episode_truncated": truncated, "next_state": 2,
-    }]
-    env.step(0)
-    env.step(0)
-    assert len(calls) == 1
-    assert env.step(1)[2:4] == (True, budget == 2)
-    assert calls[-1] == dict(calls[0], episode_index=1)
+    assert reward_calls == [] and terminate_calls == []
+
+    assert env.step(0)[1:4] == (11.0, False, False)
+    assert env.step(1)[1:4] == (12.0, False, False)
+    reset_frame = env.step(9)
+    assert reset_frame[1:4] == (10.0, False, False)
+    assert env.step(0)[1:4] == (11.0, False, False)
+    assert env.step(1)[1:4] == (12.0, True, budget == 2)
+
+    assert [call["step_index"] for call in terminate_calls] == [1, 2, 0, 1, 2]
+    assert reward_calls == [
+        {
+            "step_index": 1, "episode_index": 0, "state": 0, "action": 0,
+            "reward": 1.0, "episode_terminated": False, "episode_truncated": False, "next_state": 1,
+        },
+        {
+            "step_index": 2, "episode_index": 0, "state": 1, "action": 1,
+            "reward": 2.0, "episode_terminated": terminated, "episode_truncated": truncated, "next_state": 2,
+        },
+        {
+            "step_index": 0, "episode_index": 1, "state": 2, "action": None,
+            "reward": 0.0, "episode_terminated": False, "episode_truncated": False, "next_state": 0,
+        },
+        {
+            "step_index": 1, "episode_index": 1, "state": 0, "action": 0,
+            "reward": 1.0, "episode_terminated": False, "episode_truncated": False, "next_state": 1,
+        },
+        {
+            "step_index": 2, "episode_index": 1, "state": 1, "action": 1,
+            "reward": 2.0, "episode_terminated": terminated, "episode_truncated": truncated, "next_state": 2,
+        },
+    ]
+    assert terminate_calls == [dict(call, reward=call["reward"] + 10.0) for call in reward_calls]
     with pytest.raises(gym.error.ResetNeeded):
         env.step(0)
     env.reset()
-    env.step(0)
-    assert env.step(1)[2:4] == (False, False)
-    assert calls[-1]["episode_index"] == 0
+    assert env.step(0)[1:4] == (11.0, False, False)
+    assert terminate_calls[-1]["episode_index"] == 0
+
+
+def test_terminate_task_can_end_mid_episode_or_on_a_reset_frame():
+    mid = RepeatTaskEnv(
+        EpisodeEnv(length=3),
+        terminate_task=lambda *, step_index, **kwargs: step_index == 1,
+    )
+    mid.reset()
+    observation, _, terminated, truncated, _ = mid.step(0)
+    assert observation["episode_terminated"] is False
+    assert observation["episode_truncated"] is False
+    assert (terminated, truncated) == (True, False)
+    with pytest.raises(gym.error.ResetNeeded):
+        mid.step(0)
+
+    reset_frame = RepeatTaskEnv(
+        EpisodeEnv(length=1),
+        max_task_episodes=5,
+        terminate_task=lambda *, step_index, episode_index, **kwargs: (
+            episode_index == 1 and step_index == 0
+        ),
+    )
+    reset_frame.reset()
+    assert reset_frame.step(0)[2:4] == (False, False)
+    observation, reward, terminated, truncated, _ = reset_frame.step(7)
+    assert observation == {"observation": 0, "episode_terminated": False, "episode_truncated": False}
+    assert (reward, terminated, truncated) == (0.0, True, False)
 
 
 def test_predicate_can_terminate_after_underlying_truncation():
@@ -509,6 +565,11 @@ def test_numpy_integer_budget():
 def test_invalid_predicate():
     with pytest.raises(TypeError, match="terminate_task"):
         RepeatTaskEnv(EpisodeEnv(), terminate_task=12)  # type: ignore[arg-type]
+
+
+def test_invalid_reward_transform():
+    with pytest.raises(TypeError, match="reward_transform"):
+        RepeatTaskEnv(EpisodeEnv(), reward_transform=12)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("mode", ["unknown", "varying", "sequence", "", None, True, 1])

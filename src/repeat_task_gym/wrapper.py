@@ -26,22 +26,29 @@ class RepeatTaskEnv(
     on initial observations and episode reset frames.
 
     After a nonfinal episode ends, the next ``step()`` ignores its action and
-    returns a reset frame with reward 0.0 and both task flags false. The final
-    episode's observation is always preserved. After a task ends, callers must
-    call ``reset()`` before stepping again.
+    returns a reset frame. That frame starts at reward 0.0 with both episode
+    flags false. The final episode's observation is always preserved. After a
+    task ends, callers must call ``reset()`` before stepping again.
+
+    ``reward_transform`` and ``terminate_task`` run on every ``step()``,
+    including reset frames and mid-episode steps. They are not called from
+    ``reset()``. Both receive ``step_index``, ``episode_index``, ``state``,
+    ``action``, ``reward``, ``episode_terminated``, ``episode_truncated``, and
+    ``next_state``. Indices are zero-based for episodes. The first environment
+    step has ``step_index=1``. A reset frame has ``step_index=0``,
+    ``action=None``, reward 0.0 before the transform, and both episode flags
+    false. ``state`` is the observation before the step; ``next_state`` is the
+    observation after. Episode flags are booleans.
 
     Args:
         env: An existing Gymnasium environment, including any episode wrappers.
         max_task_episodes: Completed episodes before task truncation. Zero
-            (the default) means unlimited.
-        terminate_task: Optional predicate called only on episode-end steps
-            with keyword arguments ``step_index``, ``episode_index``, ``state``,
-            ``action``, ``reward``, ``episode_terminated``,
-            ``episode_truncated``, and ``next_state``. Indices are zero-based
-            for episodes; the first actual step has step_index=1. States are
-            the original observations; episode flags are booleans.
-            A true result terminates the task. If the episode budget is also
-            reached, both task flags are true.
+            (the default) means unlimited. Checked only when an episode ends.
+        reward_transform: Optional callable. Its return value replaces the
+            step reward. ``terminate_task`` sees that replaced reward.
+        terminate_task: Optional predicate. A true result terminates the task
+            on that step, including mid-episode and on a reset frame. If the
+            episode budget is also reached, both task flags are true.
         episode_reset_options: Options passed to every underlying reset.
             Public ``reset(options=...)`` adds or overrides options for that
             task's first episode only; later episodes use these defaults.
@@ -69,6 +76,7 @@ class RepeatTaskEnv(
         env: gym.Env[Any, ActType],
         *,
         max_task_episodes: int = 0,
+        reward_transform: Callable[..., float] | None = None,
         terminate_task: Callable[..., bool] | None = None,
         episode_reset_options: dict[str, Any] | None = None,
         episode_seed_mode: Literal["per_episode", "per_task", "constant"] = "per_episode",
@@ -77,6 +85,8 @@ class RepeatTaskEnv(
             raise TypeError("max_task_episodes must be an integer (0 = unlimited).")
         if max_task_episodes < 0:
             raise ValueError("max_task_episodes must be >= 0 (0 = unlimited).")
+        if reward_transform is not None and not callable(reward_transform):
+            raise TypeError("reward_transform must be callable or None.")
         if terminate_task is not None and not callable(terminate_task):
             raise TypeError("terminate_task must be callable or None.")
         if episode_seed_mode not in ("per_episode", "per_task", "constant"):
@@ -88,6 +98,7 @@ class RepeatTaskEnv(
         gym.utils.RecordConstructorArgs.__init__(
             self,
             max_task_episodes=max_task_episodes,
+            reward_transform=reward_transform,
             terminate_task=terminate_task,
             episode_reset_options=episode_reset_options,
             episode_seed_mode=episode_seed_mode,
@@ -101,6 +112,7 @@ class RepeatTaskEnv(
             }
         )
         self._max_task_episodes = int(max_task_episodes)
+        self._reward_transform = reward_transform
         self._terminate_task = terminate_task
         self._episode_reset_options = episode_options
         self._episode_seed_mode = episode_seed_mode
@@ -154,41 +166,47 @@ class RepeatTaskEnv(
                 seed=self._episode_seed,
                 options=dict(self._episode_reset_options) or None,
             )
+            state = self._state
             self._episode_index += 1
             self._step_index = 0
+            reward, task_terminated = self._apply_callbacks(
+                step_index=0,
+                episode_index=self._episode_index,
+                state=state,
+                action=None,
+                reward=0.0,
+                episode_terminated=False,
+                episode_truncated=False,
+                next_state=observation,
+            )
             self._state = observation
             self._episode_reset_pending = False
-            return self._observation(observation, False, False), 0.0, False, False, info
+            self._needs_reset = task_terminated
+            return self._observation(observation, False, False), reward, task_terminated, False, info
 
         observation, reward, terminated, truncated, info = self.env.step(action)
         episode_terminated = bool(terminated)
         episode_truncated = bool(truncated)
         self._step_index += 1
-        reward = float(reward)
-        task_terminated = False
-        task_truncated = False
-
-        if episode_terminated or episode_truncated:
-            if self._terminate_task is not None:
-                task_terminated = bool(
-                    self._terminate_task(
-                        step_index=self._step_index,
-                        episode_index=self._episode_index,
-                        state=self._state,
-                        action=action,
-                        reward=reward,
-                        episode_terminated=episode_terminated,
-                        episode_truncated=episode_truncated,
-                        next_state=observation,
-                    )
-                )
-            task_truncated = (
-                self._max_task_episodes > 0
-                and self._episode_index + 1 >= self._max_task_episodes
-            )
-            self._needs_reset = task_terminated or task_truncated
-            self._episode_reset_pending = not self._needs_reset
-
+        state = self._state
+        reward, task_terminated = self._apply_callbacks(
+            step_index=self._step_index,
+            episode_index=self._episode_index,
+            state=state,
+            action=action,
+            reward=float(reward),
+            episode_terminated=episode_terminated,
+            episode_truncated=episode_truncated,
+            next_state=observation,
+        )
+        episode_ended = episode_terminated or episode_truncated
+        task_truncated = (
+            episode_ended
+            and self._max_task_episodes > 0
+            and self._episode_index + 1 >= self._max_task_episodes
+        )
+        self._needs_reset = task_terminated or task_truncated
+        self._episode_reset_pending = episode_ended and not self._needs_reset
         self._state = observation
         return (
             self._observation(observation, episode_terminated, episode_truncated),
@@ -197,6 +215,39 @@ class RepeatTaskEnv(
             task_truncated,
             info,
         )
+
+    def _apply_callbacks(
+        self,
+        *,
+        step_index: int,
+        episode_index: int,
+        state: Any,
+        action: Any,
+        reward: float,
+        episode_terminated: bool,
+        episode_truncated: bool,
+        next_state: Any,
+    ) -> tuple[float, bool]:
+        """Run the reward transform, then the task predicate, for one step."""
+        transition = {
+            "step_index": step_index,
+            "episode_index": episode_index,
+            "state": state,
+            "action": action,
+            "reward": reward,
+            "episode_terminated": episode_terminated,
+            "episode_truncated": episode_truncated,
+            "next_state": next_state,
+        }
+        if self._reward_transform is not None:
+            reward = float(self._reward_transform(**transition))
+            transition["reward"] = reward
+        task_terminated = (
+            bool(self._terminate_task(**transition))
+            if self._terminate_task is not None
+            else False
+        )
+        return reward, task_terminated
 
     @staticmethod
     def _observation(
