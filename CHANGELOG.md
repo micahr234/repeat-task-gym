@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Develop on free-threaded Python 3.15 (`3.15t`). CI also tests CPython 3.11
+  and the GIL-enabled 3.15 build.
+- Require Gymnasium 1.4 or newer. Raise the development extras to pytest 9.1,
+  Pyright 1.1.414, build 1.6, and twine 7, and the examples extra to Jupyter
+  1.1.1 and ipykernel 7.4.
 - Call `reward_transform` and `terminate_task` on every `step()`, including
   mid-episode steps and the reset frame between episodes. `reward_transform`
   replaces the step reward before `terminate_task` sees it. A true predicate

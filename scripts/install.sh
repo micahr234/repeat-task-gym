@@ -8,7 +8,7 @@ if ! command -v uv >/dev/null 2>&1; then
     exit 1
 fi
 if [[ ! -d .venv ]]; then
-    uv venv --python "${REPEAT_TASK_PYTHON:-3.14}"
+    uv venv --python "${REPEAT_TASK_PYTHON:-3.15t}"
 fi
 uv pip install --python .venv/bin/python -e ".[dev,examples]"
 echo "Installed. Activate with: source .venv/bin/activate"

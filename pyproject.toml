@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=84", "wheel>=0.48"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
 ]
-dependencies = ["gymnasium>=1.0"]
+dependencies = ["gymnasium>=1.4"]
 
 [project.urls]
 Homepage = "https://github.com/micahr234/repeat-task-gym"
@@ -25,11 +25,11 @@ Issues = "https://github.com/micahr234/repeat-task-gym/issues"
 
 [project.optional-dependencies]
 examples = [
-    "jupyter>=1.1",
-    "ipykernel>=6.29",
+    "jupyter>=1.1.1",
+    "ipykernel>=7.4",
     "procedural-frozenlake>=1.0; python_version>='3.12'",
 ]
-dev = ["pytest>=8", "pyright>=1.1.400", "build>=1.2", "twine>=6"]
+dev = ["pytest>=9.1", "pyright>=1.1.414", "build>=1.6", "twine>=7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

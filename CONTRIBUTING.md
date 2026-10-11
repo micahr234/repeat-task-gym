@@ -7,9 +7,11 @@ bash scripts/install.sh
 source .venv/bin/activate
 ```
 
-The package supports Python 3.11+. The install script creates `.venv` only if
-it does not already exist, then installs the package, development tools, and
-example dependencies, including Jupyter and the Python notebook kernel.
+The package supports Python 3.11+. The install script creates `.venv` with
+free-threaded Python 3.15 (`3.15t`) only if it does not already exist, then
+installs the package, development tools, and example dependencies, including
+Jupyter and the Python notebook kernel. Set `REPEAT_TASK_PYTHON` to choose a
+different interpreter.
 
 Alternatively, use `pip install -e ".[dev,examples]"` in your own virtual
 environment, or `pip install -e ".[dev]"` for development tools only.
@@ -34,7 +36,7 @@ python -m build
 python -m twine check dist/*
 ```
 
-CI runs these checks on Python 3.11 and 3.14. Update tests and documentation
+CI runs these checks on Python 3.11, 3.15, and free-threaded 3.15. Update tests and documentation
 together when changing the public contract. Keep notebook outputs cleared.
 The test suite executes the notebook code.
 

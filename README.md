@@ -23,7 +23,8 @@ observations; the environment determines what remains hidden and learnable.
 
 ## Install
 
-Requires Python 3.11+ and Gymnasium 1.0+.
+Requires Python 3.11+ and Gymnasium 1.4+. Development uses free-threaded
+Python 3.15 (`3.15t`).
 
 ```bash
 pip install -e .

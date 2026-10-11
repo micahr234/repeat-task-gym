@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.11", "3.14"]
+        python: ["3.11", "3.15", "3.15t"]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.1.0
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: uv venv --python ${{ matrix.python }}
       - run: uv pip install --python .venv/bin/python -e ".[dev,examples]"
       - run: .venv/bin/pyright
