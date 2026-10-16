@@ -72,18 +72,18 @@ def test_episode_boundaries_preserve_terminal_observation(terminated, truncated)
     assert termination_space.n == 2
     assert truncation_space.n == 2
     assert observation in env.observation_space
-    assert info == {"reset": True}
+    assert info == {"reset": True, "executed_action": None}
 
-    assert env.step(0) == (running, 1.0, False, False, {"position": 1})
+    assert env.step(0) == (running, 1.0, False, False, {"position": 1, "executed_action": 0})
     terminal = env.step(1)
-    assert terminal == (ended, 2.0, False, False, {"position": 2})
+    assert terminal == (ended, 2.0, False, False, {"position": 2, "executed_action": 1})
     assert terminal[0] in env.observation_space
     assert terminal[0]["episode_terminated"] is terminated
     assert terminal[0]["episode_truncated"] is truncated
     assert len(base.reset_calls) == 1
 
     reset_frame = env.step(0)
-    assert reset_frame == (initial, 0.0, False, False, {"reset": True})
+    assert reset_frame == (initial, 0.0, False, False, {"reset": True, "executed_action": None})
     assert base.actions == [0, 1]
     assert isinstance(base.reset_calls[-1][0], int)
     assert base.reset_calls[-1][0] != base.reset_calls[0][0]
@@ -91,7 +91,7 @@ def test_episode_boundaries_preserve_terminal_observation(terminated, truncated)
 
     env.step(1)
     final = env.step(0)
-    assert final == (ended, 2.0, False, True, {"position": 2})
+    assert final == (ended, 2.0, False, True, {"position": 2, "executed_action": 0})
     assert final[0] in env.observation_space
     assert len(base.reset_calls) == 2
     with pytest.raises(gym.error.ResetNeeded):
@@ -527,13 +527,17 @@ def test_original_spaces_observations_actions_and_info_are_preserved(space):
     observation, info = env.reset(seed=0)
     assert observation in env.observation_space
     assert observation["observation"] is base.value
-    assert info is base.info
+    assert info is not base.info
+    assert info["payload"] is base.info["payload"]
+    assert "executed_action" not in base.info
     action = env.action_space.sample()
     observation, reward, terminated, truncated, info = env.step(action)
     assert observation in env.observation_space
     assert observation["observation"] is base.value
     assert base.action is action
-    assert info is base.info
+    assert info is not base.info
+    assert info["payload"] is base.info["payload"]
+    assert "executed_action" not in base.info
     assert (reward, terminated, truncated) == (0.25, False, False)
 
 
@@ -598,3 +602,29 @@ def test_gymnasium_checker_and_real_environment_rollout(env_id):
                 env.reset()
     finally:
         env.close()
+
+
+@pytest.mark.parametrize("ignored_action", [None, 0, 1, 999])
+def test_reset_action_metadata_is_none_independent_of_input(ignored_action):
+    base = EpisodeEnv(length=1)
+    env = RepeatTaskEnv(base, max_task_episodes=2)
+    _, info = env.reset(seed=5)
+    assert info["executed_action"] is None
+    assert env.step(1)[-1]["executed_action"] == 1
+    assert env.step(ignored_action)[-1]["executed_action"] is None
+    assert base.actions == [1]
+    assert env.step(0)[-1]["executed_action"] == 0
+    assert env.reset()[1]["executed_action"] is None
+
+
+def test_executed_action_array_is_snapshotted():
+    class ArrayEnv(EpisodeEnv):
+        def __init__(self):
+            super().__init__()
+            self.action_space = gym.spaces.Box(-1., 1., (2,), dtype=np.float32)
+    env = RepeatTaskEnv(ArrayEnv())
+    env.reset()
+    action = np.array([0.25, -0.5], dtype=np.float32)
+    info = env.step(action)[-1]
+    action[:] = 0
+    np.testing.assert_array_equal(info["executed_action"], [0.25, -0.5])

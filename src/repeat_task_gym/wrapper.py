@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from numbers import Integral
 from typing import Any, Literal, TypeVar
 
@@ -29,6 +30,10 @@ class RepeatTaskEnv(
     returns a reset frame. That frame starts at reward 0.0 with both episode
     flags false. The final episode's observation is always preserved. After a
     task ends, callers must call ``reset()`` before stepping again.
+
+    ``info["executed_action"]`` records the action that produced the observation,
+    or ``None`` on every reset (including ``reset()``). This reserved info key
+    never echoes an ignored reset action. Other info entries are preserved.
 
     ``reward_transform`` and ``terminate_task`` run on every ``step()``,
     including reset frames and mid-episode steps. They are not called from
@@ -152,7 +157,7 @@ class RepeatTaskEnv(
         self._state = observation
         self._episode_reset_pending = False
         self._needs_reset = False
-        return self._observation(observation, False, False), info
+        return self._observation(observation, False, False), self._action_info(info, None)
 
     def step(self, action: ActType) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         """Advance the current episode, or emit its pending reset frame."""
@@ -182,7 +187,10 @@ class RepeatTaskEnv(
             self._state = observation
             self._episode_reset_pending = False
             self._needs_reset = task_terminated
-            return self._observation(observation, False, False), reward, task_terminated, False, info
+            return (
+                self._observation(observation, False, False), reward,
+                task_terminated, False, self._action_info(info, None),
+            )
 
         observation, reward, terminated, truncated, info = self.env.step(action)
         episode_terminated = bool(terminated)
@@ -213,8 +221,14 @@ class RepeatTaskEnv(
             reward,
             task_terminated,
             task_truncated,
-            info,
+            self._action_info(info, action),
         )
+
+    @staticmethod
+    def _action_info(info: dict[str, Any], action: Any) -> dict[str, Any]:
+        # Do not mutate an info dict reused by the underlying environment, or
+        # retain an action array that the caller might overwrite next step.
+        return {**info, "executed_action": deepcopy(action)}
 
     def _apply_callbacks(
         self,

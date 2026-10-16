@@ -82,6 +82,12 @@ Keep stepping between episodes. An episode-ending step returns its final
 observation. If the task continues, the following step returns a reset frame
 and ignores its action. Call `reset()` before stepping and after the task ends.
 
+`info["executed_action"]` is `None` on every reset, regardless of the action
+supplied to `step()`. On an ordinary step it contains an independent copy of
+the supplied action. Record this reserved field instead of echoing the input
+when constructing trajectories. Other info entries are preserved; the wrapper
+returns a new info dictionary without mutating the underlying one.
+
 `max_task_episodes=0` allows unlimited episodes. That budget is checked only
 when an episode ends. `reward_transform` and `terminate_task` run on every
 `step()`, including mid-episode steps and the reset frame between episodes.
