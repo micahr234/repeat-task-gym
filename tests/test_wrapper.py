@@ -628,3 +628,23 @@ def test_executed_action_array_is_snapshotted():
     info = env.step(action)[-1]
     action[:] = 0
     np.testing.assert_array_equal(info["executed_action"], [0.25, -0.5])
+
+
+@pytest.mark.parametrize('action', [None, -1, 2, 999, 'move'])
+def test_invalid_real_action_is_rejected_without_advancing(action):
+    base = EpisodeEnv(length=1)
+    env = RepeatTaskEnv(base, max_task_episodes=2)
+    assert not env.action_required
+    env.reset(seed=9)
+    assert env.action_required
+    with pytest.raises(ValueError, match='outside'):
+        env.step(action)
+    assert base.actions == []
+    assert env.action_required
+    env.step(0)
+    assert not env.action_required
+    assert env.step(action)[-1]['executed_action'] is None
+    assert env.action_required
+    env.step(1)
+    assert not env.action_required
+    assert base.actions == [0, 1]

@@ -34,6 +34,9 @@ class RepeatTaskEnv(
     ``info["executed_action"]`` records the action that produced the observation,
     or ``None`` on every reset (including ``reset()``). This reserved info key
     never echoes an ignored reset action. Other info entries are preserved.
+    Real actions must belong to ``action_space``; invalid inputs are rejected
+    before advancing the underlying environment. Pending reset frames accept
+    ``None`` or any ignored input, and always report ``executed_action=None``.
 
     ``reward_transform`` and ``terminate_task`` run on every ``step()``,
     including reset frames and mid-episode steps. They are not called from
@@ -159,7 +162,12 @@ class RepeatTaskEnv(
         self._needs_reset = False
         return self._observation(observation, False, False), self._action_info(info, None)
 
-    def step(self, action: ActType) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
+    @property
+    def action_required(self) -> bool:
+        """Whether the next step executes an action (rather than resetting)."""
+        return not self._needs_reset and not self._episode_reset_pending
+
+    def step(self, action: ActType | None) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
         """Advance the current episode, or emit its pending reset frame."""
         if self._needs_reset:
             raise gym.error.ResetNeeded("Call reset() before stepping and after a task ends.")
@@ -192,6 +200,8 @@ class RepeatTaskEnv(
                 task_terminated, False, self._action_info(info, None),
             )
 
+        if not self.action_space.contains(action):
+            raise ValueError(f"Action {action!r} is outside {self.action_space}.")
         observation, reward, terminated, truncated, info = self.env.step(action)
         episode_terminated = bool(terminated)
         episode_truncated = bool(truncated)
