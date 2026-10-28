@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from copy import deepcopy
 from numbers import Integral
 from typing import Any, Literal, TypeVar
 
@@ -26,17 +25,17 @@ class RepeatTaskEnv(
     flags are preserved when the underlying env sets both, and both are false
     on initial observations and episode reset frames.
 
-    After a nonfinal episode ends, the next ``step()`` ignores its action and
-    returns a reset frame. That frame starts at reward 0.0 with both episode
-    flags false. The final episode's observation is always preserved. After a
-    task ends, callers must call ``reset()`` before stepping again.
+    After a nonfinal episode ends, callers must use ``step(None)`` to
+    acknowledge the boundary and receive a reset frame.
+    Any other action is rejected without advancing the environment. That
+    frame starts at reward 0.0 with both episode flags false. The final
+    episode's observation is always preserved. After a task ends, callers
+    must call ``reset()`` before stepping again.
 
-    ``info["executed_action"]`` records the action that produced the observation,
-    or ``None`` on every reset (including ``reset()``). This reserved info key
-    never echoes an ignored reset action. Other info entries are preserved.
-    Real actions must belong to ``action_space``; invalid inputs are rejected
-    before advancing the underlying environment. Pending reset frames accept
-    ``None`` or any ignored input, and always report ``executed_action=None``.
+    Underlying ``info`` entries are preserved in a new dictionary. The wrapper
+    does not add metadata to ``info``.
+    During an episode, actions must be non-None members of ``action_space``;
+    invalid inputs are rejected before advancing the underlying environment.
 
     ``reward_transform`` and ``terminate_task`` run on every ``step()``,
     including reset frames and mid-episode steps. They are not called from
@@ -160,19 +159,27 @@ class RepeatTaskEnv(
         self._state = observation
         self._episode_reset_pending = False
         self._needs_reset = False
-        return self._observation(observation, False, False), self._action_info(info, None)
+        return self._observation(observation, False, False), dict(info)
 
     @property
     def action_required(self) -> bool:
-        """Whether the next step executes an action (rather than resetting)."""
+        """Whether the next step needs an action from the environment's space.
+
+        False means either a pending ``step(None)`` frame or a task that needs
+        public ``reset()``; task termination flags distinguish these cases.
+        """
         return not self._needs_reset and not self._episode_reset_pending
 
     def step(self, action: ActType | None) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
-        """Advance the current episode, or emit its pending reset frame."""
+        """Advance the episode, or acknowledge its end with ``step(None)``."""
         if self._needs_reset:
             raise gym.error.ResetNeeded("Call reset() before stepping and after a task ends.")
 
         if self._episode_reset_pending:
+            if action is not None:
+                raise ValueError(
+                    "The episode has ended. Call step(None) to start the next episode."
+                )
             if self._episode_seed_mode == "per_episode":
                 self._episode_seed = int(self._seed_rng.integers(0, 2**31))
             observation, info = self.env.reset(
@@ -197,10 +204,10 @@ class RepeatTaskEnv(
             self._needs_reset = task_terminated
             return (
                 self._observation(observation, False, False), reward,
-                task_terminated, False, self._action_info(info, None),
+                task_terminated, False, dict(info),
             )
 
-        if not self.action_space.contains(action):
+        if action is None or not self.action_space.contains(action):
             raise ValueError(f"Action {action!r} is outside {self.action_space}.")
         observation, reward, terminated, truncated, info = self.env.step(action)
         episode_terminated = bool(terminated)
@@ -231,14 +238,8 @@ class RepeatTaskEnv(
             reward,
             task_terminated,
             task_truncated,
-            self._action_info(info, action),
+            dict(info),
         )
-
-    @staticmethod
-    def _action_info(info: dict[str, Any], action: Any) -> dict[str, Any]:
-        # Do not mutate an info dict reused by the underlying environment, or
-        # retain an action array that the caller might overwrite next step.
-        return {**info, "executed_action": deepcopy(action)}
 
     def _apply_callbacks(
         self,

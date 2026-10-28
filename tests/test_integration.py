@@ -20,13 +20,14 @@ def test_episode_and_task_statistics_at_their_respective_levels():
     )
     try:
         env.reset(seed=0)
-        for _ in range(4):
-            env.step(0)
+        for action in (0, 0, None, 0):
+            env.step(action)
         _, _, terminated, truncated, info = env.step(0)
         assert (terminated, truncated) == (False, True)
         assert list(inner.return_queue) == [2.0, 2.0]
         assert list(inner.length_queue) == [2, 2]
         assert info["episode"]["r"] == 2.0
+        assert "episode_index" not in info
         assert info["task"]["r"] == 4.0
         assert info["task"]["l"] == 5
     finally:
@@ -38,8 +39,8 @@ def test_flatten_observation():
     try:
         observation, _ = env.reset(seed=0)
         assert observation.shape == (8,)  # Four state values + two one-hot binary fields.
-        for _ in range(5):
-            observation, _, _, _, _ = env.step(0)
+        for action in (0, 0, None, 0, 0):
+            observation, _, _, _, _ = env.step(action)
             assert observation in env.observation_space
     finally:
         env.close()
@@ -87,12 +88,13 @@ def test_outer_autoreset_starts_new_tasks():
     env = gym.wrappers.Autoreset(make_task())
     try:
         env.reset(seed=0)
-        for _ in range(5):
-            env.step(0)
-        observation, reward, terminated, truncated, _ = env.step(0)
+        for action in (0, 0, None, 0, 0):
+            env.step(action)
+        observation, reward, terminated, truncated, info = env.step(0)
         assert observation["episode_terminated"] is False
         assert observation["episode_truncated"] is False
         assert (reward, terminated, truncated) == (0.0, False, False)
+        assert "episode_index" not in info
         assert env.step(0)[1] == 1.0
     finally:
         env.close()
@@ -104,18 +106,45 @@ def test_sync_vector_task_boundaries_and_automatic_task_reset():
         observation, _ = env.reset(seed=10)
         assert observation in env.observation_space
         for step in range(5):
-            observation, rewards, terminated, truncated, _ = env.step(np.array([0, 1]))
+            actions = np.array([None, None], dtype=object) if step == 2 else np.array([0, 1])
+            observation, rewards, terminated, truncated, info = env.step(actions)
             assert observation in env.observation_space
             np.testing.assert_array_equal(terminated, [False, False])
             np.testing.assert_array_equal(truncated, [step == 4, step == 4])
             np.testing.assert_array_equal(observation["episode_terminated"], [False, False])
             np.testing.assert_array_equal(observation["episode_truncated"], [step in (1, 4)] * 2)
             np.testing.assert_array_equal(rewards, [0.0 if step == 2 else 1.0] * 2)
-        observation, rewards, terminated, truncated, _ = env.step(np.array([0, 1]))
+            assert "episode_index" not in info
+        observation, rewards, terminated, truncated, info = env.step(np.array([0, 1]))
         np.testing.assert_array_equal(observation["episode_terminated"], [False, False])
         np.testing.assert_array_equal(observation["episode_truncated"], [False, False])
         np.testing.assert_array_equal(rewards, [0.0, 0.0])
+        assert "episode_index" not in info
         assert not terminated.any() and not truncated.any()
+    finally:
+        env.close()
+
+
+def test_sync_vector_can_acknowledge_one_episode_while_another_keeps_running():
+    env = gym.vector.SyncVectorEnv([
+        lambda: RepeatTaskEnv(
+            gym.make("CartPole-v1", max_episode_steps=1), max_task_episodes=2,
+        ),
+        make_task,
+    ])
+    try:
+        observation, _ = env.reset(seed=10)
+        rewards_by_step = []
+        for _ in range(6):
+            episode_ended = observation["episode_terminated"] | observation["episode_truncated"]
+            actions = np.array([None if ended else 0 for ended in episode_ended], dtype=object)
+            observation, rewards, _, _, info = env.step(actions)
+            assert "episode_index" not in info
+            rewards_by_step.append(rewards.tolist())
+        assert rewards_by_step == [
+            [1.0, 1.0], [0.0, 1.0], [1.0, 0.0],
+            [0.0, 1.0], [1.0, 1.0], [0.0, 0.0],
+        ]
     finally:
         env.close()
 
@@ -136,8 +165,9 @@ def test_spec_recreates_the_wrapper(mode):
             right, _ = recreated.reset(seed=7)
             np.testing.assert_array_equal(left["observation"], right["observation"])
             for step in range(5):
-                left_step = original.step(0)
-                right_step = recreated.step(0)
+                action = None if step == 2 else 0
+                left_step = original.step(action)
+                right_step = recreated.step(action)
                 np.testing.assert_array_equal(left_step[0]["observation"], right_step[0]["observation"])
                 assert left_step[0]["episode_terminated"] == right_step[0]["episode_terminated"]
                 assert left_step[0]["episode_truncated"] == right_step[0]["episode_truncated"]
@@ -161,7 +191,7 @@ def test_cartpole_episode_starts_follow_seed_mode(mode):
     try:
         first, _ = env.reset(seed=42)
         env.step(0)
-        second, _, _, _, _ = env.step(0)
+        second, _, _, _, _ = env.step(None)
         if mode != "per_episode":
             np.testing.assert_array_equal(first["observation"], second["observation"])
         else:
@@ -172,7 +202,7 @@ def test_cartpole_episode_starts_follow_seed_mode(mode):
         replay, _ = env.reset(seed=42)
         np.testing.assert_array_equal(first["observation"], replay["observation"])
         env.step(0)
-        replay_second, _, _, _, _ = env.step(0)
+        replay_second, _, _, _, _ = env.step(None)
         np.testing.assert_array_equal(second["observation"], replay_second["observation"])
     finally:
         env.close()

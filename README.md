@@ -33,31 +33,80 @@ pip install -e ".[examples]"  # Include notebook dependencies.
 
 ## Quick start
 
+FrozenLake makes the learning problem concrete: an agent must find a route
+across a lake without knowing which tiles are safe and which are holes. The
+example generates a map with a path to the goal, but does not give that map
+to the policy. The agent observes its current cell and the outcomes of its
+actions. Movement is deterministic here, so a failed attempt can teach it
+which route to avoid on the next attempt.
+
+**One map is a task; each attempt on that map is an episode.** An episode ends
+at the goal, in a hole, or after 50 steps. Repeat Task Gym keeps these attempts
+inside one task, with an explicit episode boundary where the agent can retain
+what it learned. This formalizes the question: **how many attempts does the
+agent need on a new, unknown task to meet a success criterion?**
+
+Below, the criterion is reaching the goal once. `terminate_task` ends the task
+on success, while `max_task_episodes=10` caps the number of attempts. The caller
+counts completed episodes to measure attempts used. If the budget runs out
+first, record the task as unsolved within that budget.
+
 ```python
 import gymnasium as gym
+from gymnasium.envs.toy_text.frozen_lake import generate_random_map
+
 from repeat_task_gym import RepeatTaskEnv
 
+
+def reached_goal(*, reward, episode_terminated, **kwargs):
+    return episode_terminated and reward > 0
+
+
 env = RepeatTaskEnv(
-    gym.make("CartPole-v1", max_episode_steps=50), max_task_episodes=3
+    gym.make(
+        "FrozenLake-v1",
+        desc=generate_random_map(size=4, p=0.8, seed=7),
+        is_slippery=False,
+        max_episode_steps=50,
+    ),
+    max_task_episodes=10,
+    terminate_task=reached_goal,
 )
 try:
-    observation, info = env.reset()
+    observation, _ = env.reset()
+    attempts = 0
     episode_return = 0.0
     while True:
-        observation, reward, terminated, truncated, info = env.step(
-            env.action_space.sample()
-        )
+        # An episode boundary requires an explicit reset-frame step.
+        action = env.action_space.sample() if env.action_required else None
+        observation, reward, terminated, truncated, _ = env.step(action)
         episode_return += reward
         if observation["episode_terminated"] or observation["episode_truncated"]:
-            print("Episode return:", episode_return)
+            attempts += 1
+            print(f"Attempt {attempts} return: {episode_return}")
             episode_return = 0.0
         if terminated or truncated:
+            if terminated:
+                print(f"Reached the goal after {attempts} attempts.")
+            else:
+                print(f"Goal not reached within {attempts} attempts.")
             break
 finally:
     env.close()
 ```
 
-This random policy traces three episodes of one task; it does not learn.
+The random action sampler only illustrates the protocol; it does not learn.
+An adapting agent would update its memory from real transitions, keep that
+memory across `step(None)` episode resets, and clear it for a new map. The
+number of attempts to first success is a simple measure; consistent success
+over later episodes is stronger evidence that the agent learned the task.
+
+The generated map stays fixed for all attempts. The map seed makes the layout
+reproducible; it does not reveal the map to the policy. To evaluate another
+unknown task, generate another map and construct a new FrozenLake environment
+with it. Calling public `reset()` on this environment starts another task on
+the same map; it does not generate a new layout. Across sampled maps, compare
+attempts to success and the fraction of tasks solved under the same budget.
 
 ## Using the wrapper
 
@@ -79,14 +128,19 @@ The **task flags are the separate `terminated` and `truncated` return values**.
 | `truncated` | The task reached `max_task_episodes`. |
 
 Keep stepping between episodes. An episode-ending step returns its final
-observation. If the task continues, the following step returns a reset frame
-and ignores its action. Call `reset()` before stepping and after the task ends.
+observation. If the task continues, call **`step(None)`** next to receive the
+reset frame. Passing any other action on that step raises `ValueError` without
+advancing the environment. Then resume ordinary actions. This applies to both
+episode termination and episode truncation. Call `reset()` before stepping
+and after the task ends.
 
-`info["executed_action"]` is `None` on every reset, regardless of the action
-supplied to `step()`. On an ordinary step it contains an independent copy of
-the supplied action. Record this reserved field instead of echoing the input
-when constructing trajectories. Other info entries are preserved; the wrapper
-returns a new info dictionary without mutating the underlying one.
+`env.action_required` is false while that reset frame is pending (and before a
+task is reset). `None` is not an ordinary environment action. Reset frames
+return reward 0 before any reward transform and should not be used as action
+transitions when updating a learner.
+
+The wrapper returns the base environment's `info` entries in a new dictionary
+without adding metadata or mutating the original dictionary.
 
 `max_task_episodes=0` allows unlimited episodes. That budget is checked only
 when an episode ends. `reward_transform` and `terminate_task` run on every
@@ -139,7 +193,7 @@ verify which conditions stay fixed or change in your configuration.
 Run `jupyter lab examples/` after installing the examples extra.
 
 - [00 — Episodes to tasks](examples/00_episodes_to_tasks.ipynb): learning within one task.
-- [01 — Random rollout](examples/01_random_rollout.ipynb): inputs, outputs, and boundaries.
+- [01 — Random rollout](examples/01_random_rollout.ipynb): CartPole inputs, outputs, and explicit reset frames.
 - [02 — Task termination](examples/02_task_termination.ipynb): success conditions and episode budgets.
 - [03 — Seeding](examples/03_rng_seeding_control.ipynb): seed modes and reset options. Requires Python 3.12+.
 - [04 — Composition](examples/04_gymnasium_composition.ipynb): statistics, flattening, and vectorization.

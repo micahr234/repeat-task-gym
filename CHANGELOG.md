@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Require `step(None)` for the reset frame between episodes. Reject other
+  actions without advancing the pending reset. Remove wrapper-added metadata
+  from `info`; preserve the base environment's entries.
 - Develop on free-threaded Python 3.15 (`3.15t`). CI also tests CPython 3.11
   and the GIL-enabled 3.15 build.
 - Require Gymnasium 1.4 or newer. Raise the development extras to pytest 9.1,

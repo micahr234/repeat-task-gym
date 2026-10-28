@@ -72,18 +72,18 @@ def test_episode_boundaries_preserve_terminal_observation(terminated, truncated)
     assert termination_space.n == 2
     assert truncation_space.n == 2
     assert observation in env.observation_space
-    assert info == {"reset": True, "executed_action": None}
+    assert info == {"reset": True}
 
-    assert env.step(0) == (running, 1.0, False, False, {"position": 1, "executed_action": 0})
+    assert env.step(0) == (running, 1.0, False, False, {"position": 1})
     terminal = env.step(1)
-    assert terminal == (ended, 2.0, False, False, {"position": 2, "executed_action": 1})
+    assert terminal == (ended, 2.0, False, False, {"position": 2})
     assert terminal[0] in env.observation_space
     assert terminal[0]["episode_terminated"] is terminated
     assert terminal[0]["episode_truncated"] is truncated
     assert len(base.reset_calls) == 1
 
-    reset_frame = env.step(0)
-    assert reset_frame == (initial, 0.0, False, False, {"reset": True, "executed_action": None})
+    reset_frame = env.step(None)
+    assert reset_frame == (initial, 0.0, False, False, {"reset": True})
     assert base.actions == [0, 1]
     assert isinstance(base.reset_calls[-1][0], int)
     assert base.reset_calls[-1][0] != base.reset_calls[0][0]
@@ -91,7 +91,7 @@ def test_episode_boundaries_preserve_terminal_observation(terminated, truncated)
 
     env.step(1)
     final = env.step(0)
-    assert final == (ended, 2.0, False, True, {"position": 2, "executed_action": 0})
+    assert final == (ended, 2.0, False, True, {"position": 2})
     assert final[0] in env.observation_space
     assert len(base.reset_calls) == 2
     with pytest.raises(gym.error.ResetNeeded):
@@ -123,7 +123,7 @@ def test_unlimited_task_keeps_repeating():
         observation, _, _, _, _ = env.step(0)
         assert observation["episode_terminated"] is True
         assert observation["episode_truncated"] is False
-        observation, reward, terminated, truncated, _ = env.step(0)
+        observation, reward, terminated, truncated, _ = env.step(None)
         assert observation["episode_terminated"] is False
         assert observation["episode_truncated"] is False
         assert (reward, terminated, truncated) == (0.0, False, False)
@@ -165,7 +165,7 @@ def test_callbacks_run_every_step_and_budget_is_independent(budget, terminated, 
 
     assert env.step(0)[1:4] == (11.0, False, False)
     assert env.step(1)[1:4] == (12.0, False, False)
-    reset_frame = env.step(9)
+    reset_frame = env.step(None)
     assert reset_frame[1:4] == (10.0, False, False)
     assert env.step(0)[1:4] == (11.0, False, False)
     assert env.step(1)[1:4] == (12.0, True, budget == 2)
@@ -223,7 +223,7 @@ def test_terminate_task_can_end_mid_episode_or_on_a_reset_frame():
     )
     reset_frame.reset()
     assert reset_frame.step(0)[2:4] == (False, False)
-    observation, reward, terminated, truncated, _ = reset_frame.step(7)
+    observation, reward, terminated, truncated, _ = reset_frame.step(None)
     assert observation == {"observation": 0, "episode_terminated": False, "episode_truncated": False}
     assert (reward, terminated, truncated) == (0.0, True, False)
 
@@ -246,7 +246,7 @@ def test_manual_reset_discards_pending_episode_and_task_progress(steps):
     env = RepeatTaskEnv(base, max_task_episodes=2)
     env.reset(seed=5)
     for _ in range(steps):
-        env.step(0)
+        env.step(0 if env.action_required else None)
     env.reset(seed=5)
     resets = len(base.reset_calls)
     assert env.step(1)[0] == {"observation": 1, "episode_terminated": False, "episode_truncated": False}
@@ -272,7 +272,7 @@ def test_reset_option_precedence_and_episode_options_are_separate(mode):
     assert received_options is not None
     received_options["mutated"] = True
     env.step(0)
-    env.step(0)
+    env.step(None)
     assert isinstance(base.reset_calls[-1][0], int)
     if mode != "per_episode":
         assert base.reset_calls[-1][0] == first_seed
@@ -281,7 +281,7 @@ def test_reset_option_precedence_and_episode_options_are_separate(mode):
     assert received_options is not None
     received_options["mutated"] = True
     env.step(0)
-    env.step(0)
+    env.step(None)
     assert base.reset_calls[-1][1] == env_options
     env.reset()
     assert base.reset_calls[-1][1] == env_options
@@ -324,7 +324,7 @@ def test_seed_stream_and_per_episode_resets(reset_kwargs):
     def run(seed):
         first, _ = env.reset(seed=seed, options={"regenerate_task": True})
         env.step(0)
-        second, _, _, _, _ = env.step(0)
+        second, _, _, _, _ = env.step(None)
         assert env.step(0)[2:4] == (False, True)
         third, _ = env.reset(**reset_kwargs, options={"regenerate_task": True})
         return [first["observation"], second["observation"], third["observation"]]
@@ -353,13 +353,13 @@ def test_per_task_seed_replays_procedural_episodes_and_changes_on_new_tasks(rese
         first, _ = env.reset(seed=seed)
         env.step(0)
         env.step(1)
-        second, _, _, _, _ = env.step(0)
+        second, _, _, _, _ = env.step(None)
         env.step(1)
         assert env.step(1)[2:4] == (False, True)
         third, _ = env.reset(**reset_kwargs)
         env.step(1)
         env.step(0)
-        fourth, _, _, _, _ = env.step(0)
+        fourth, _, _, _, _ = env.step(None)
         env.step(0)
         assert env.step(0)[2:4] == (False, True)
         return [obs["observation"] for obs in (first, second, third, fourth)]
@@ -388,7 +388,7 @@ def test_constant_seed_persists_across_tasks_until_public_reseed():
     def run(**reset_kwargs):
         first, _ = env.reset(**reset_kwargs)
         env.step(0)
-        second, _, _, _, _ = env.step(0)
+        second, _, _, _, _ = env.step(None)
         assert env.step(0)[3] is True
         return [first["observation"], second["observation"]], base.seeds[-2:]
 
@@ -427,7 +427,7 @@ def test_episode_resets_are_independent_of_previous_steps_and_random_draws(mode)
         first, _ = env.reset(seed=42, options={"regenerate_task": True})
         for _ in range(length):
             env.step(action)
-        second, _, _, _, _ = env.step(0)
+        second, _, _, _, _ = env.step(None)
         return [first["observation"], second["observation"]], base.seeds
 
     short, short_seeds = run(1, 0)
@@ -444,7 +444,7 @@ def test_episode_count_advances_seed_stream_only_in_per_episode_mode(mode):
         env.reset(seed=42, options={"regenerate_task": True})
         for _ in range(episodes):
             env.step(0)
-            env.step(0)
+            env.step(None)
         next_task, _ = env.reset(options={"regenerate_task": True})
         return next_task["observation"], base.seeds[-1]
 
@@ -463,7 +463,7 @@ def test_modes_draw_from_the_same_stream_at_their_scheduled_boundaries(seed):
             env.reset(seed=seed if task_index == 0 else None)
             for _ in range(episodes - 1):
                 env.step(0)  # End this episode.
-                env.step(0)  # Reset the next episode.
+                env.step(None)  # Reset the next episode.
             env.step(0)
         return base.seeds
 
@@ -529,7 +529,9 @@ def test_original_spaces_observations_actions_and_info_are_preserved(space):
     assert observation["observation"] is base.value
     assert info is not base.info
     assert info["payload"] is base.info["payload"]
-    assert "executed_action" not in base.info
+    assert "episode_index" not in base.info
+    assert "episode_index" not in info
+    assert "executed_action" not in info
     action = env.action_space.sample()
     observation, reward, terminated, truncated, info = env.step(action)
     assert observation in env.observation_space
@@ -537,7 +539,9 @@ def test_original_spaces_observations_actions_and_info_are_preserved(space):
     assert base.action is action
     assert info is not base.info
     assert info["payload"] is base.info["payload"]
-    assert "executed_action" not in base.info
+    assert "episode_index" not in base.info
+    assert "episode_index" not in info
+    assert "executed_action" not in info
     assert (reward, terminated, truncated) == (0.25, False, False)
 
 
@@ -596,7 +600,8 @@ def test_gymnasium_checker_and_real_environment_rollout(env_id):
         observation, _ = env.reset(seed=0)
         assert observation in env.observation_space
         for _ in range(450):
-            observation, _, terminated, truncated, _ = env.step(env.action_space.sample())
+            action = env.action_space.sample() if env.action_required else None
+            observation, _, terminated, truncated, _ = env.step(action)
             assert observation in env.observation_space
             if terminated or truncated:
                 env.reset()
@@ -604,47 +609,104 @@ def test_gymnasium_checker_and_real_environment_rollout(env_id):
         env.close()
 
 
-@pytest.mark.parametrize("ignored_action", [None, 0, 1, 999])
-def test_reset_action_metadata_is_none_independent_of_input(ignored_action):
-    base = EpisodeEnv(length=1)
-    env = RepeatTaskEnv(base, max_task_episodes=2)
-    _, info = env.reset(seed=5)
-    assert info["executed_action"] is None
-    assert env.step(1)[-1]["executed_action"] == 1
-    assert env.step(ignored_action)[-1]["executed_action"] is None
-    assert base.actions == [1]
-    assert env.step(0)[-1]["executed_action"] == 0
-    assert env.reset()[1]["executed_action"] is None
+@pytest.mark.parametrize("terminated,truncated", [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize("mode", ["per_episode", "per_task", "constant"])
+def test_pending_reset_requires_none_without_consuming_boundary(terminated, truncated, mode):
+    base = EpisodeEnv(length=1, terminated=terminated, truncated=truncated)
+    callbacks = []
+
+    def record_transition(**transition):
+        callbacks.append(transition)
+        return transition["reward"]
+
+    env = RepeatTaskEnv(
+        base, max_task_episodes=2, episode_seed_mode=mode,
+        reward_transform=record_transition,
+    )
+    env.reset(seed=5)
+    assert "episode_index" not in env.step(1)[-1]
+    assert not env.action_required
+    for action in (0, 1, 999, "move", np.array([0, 1]), {"move": 0}):
+        with pytest.raises(ValueError, match=r"Call step\(None\)"):
+            env.step(action)
+        assert not env.action_required
+        assert base.actions == [1]
+        assert len(base.reset_calls) == 1
+        assert len(callbacks) == 1
+
+    _, reward, terminated, truncated, info = env.step(None)
+    assert (reward, terminated, truncated) == (0.0, False, False)
+    assert info == {"reset": True}
+    assert env.action_required
+    assert len(base.reset_calls) == 2
+    assert len(callbacks) == 2
+    assert callbacks[-1]["episode_index"] == 1
+    assert callbacks[-1]["action"] is None
+
+    # Rejected calls must not consume a seed from the stream.
+    control_base = EpisodeEnv(length=1)
+    control = RepeatTaskEnv(control_base, episode_seed_mode=mode)
+    control.reset(seed=5)
+    control.step(1)
+    control.step(None)
+    assert base.reset_calls == control_base.reset_calls
+
+    assert "episode_index" not in env.step(0)[-1]
+    with pytest.raises(gym.error.ResetNeeded):
+        env.step(None)
+    assert len(base.reset_calls) == 2
+    assert base.actions == [1, 0]
+    assert "episode_index" not in env.reset()[1]
 
 
-def test_executed_action_array_is_snapshotted():
-    class ArrayEnv(EpisodeEnv):
+def test_info_is_copied_without_added_metadata_across_episode_and_task_resets():
+    class ReusedInfoEnv(EpisodeEnv):
         def __init__(self):
-            super().__init__()
-            self.action_space = gym.spaces.Box(-1., 1., (2,), dtype=np.float32)
-    env = RepeatTaskEnv(ArrayEnv())
-    env.reset()
-    action = np.array([0.25, -0.5], dtype=np.float32)
-    info = env.step(action)[-1]
-    action[:] = 0
-    np.testing.assert_array_equal(info["executed_action"], [0.25, -0.5])
+            super().__init__(length=2)
+            self.info: dict[str, Any] = {"payload": object()}
+
+        def reset(self, *, seed=None, options=None):
+            observation, _ = super().reset(seed=seed, options=options)
+            return observation, self.info
+
+        def step(self, action):
+            observation, reward, terminated, truncated, _ = super().step(action)
+            return observation, reward, terminated, truncated, self.info
+
+    base = ReusedInfoEnv()
+    env = RepeatTaskEnv(base, max_task_episodes=3)
+    infos = [env.reset()[1]]
+    for episode_index in range(3):
+        infos.append(env.step(0)[-1])
+        infos.append(env.step(1)[-1])
+        if episode_index < 2:
+            infos.append(env.step(None)[-1])
+    infos.append(env.reset()[1])
+    for info in infos:
+        assert info == base.info
+        assert info is not base.info
+        assert info["payload"] is base.info["payload"]
+        assert "executed_action" not in info
+    assert set(base.info) == {"payload"}
 
 
-@pytest.mark.parametrize('action', [None, -1, 2, 999, 'move'])
+@pytest.mark.parametrize("action", [None, -1, 2, 999, "move"])
 def test_invalid_real_action_is_rejected_without_advancing(action):
     base = EpisodeEnv(length=1)
     env = RepeatTaskEnv(base, max_task_episodes=2)
     assert not env.action_required
     env.reset(seed=9)
     assert env.action_required
-    with pytest.raises(ValueError, match='outside'):
+    with pytest.raises(ValueError, match="outside"):
         env.step(action)
     assert base.actions == []
     assert env.action_required
     env.step(0)
     assert not env.action_required
-    assert env.step(action)[-1]['executed_action'] is None
+    assert "episode_index" not in env.step(None)[-1]
     assert env.action_required
+    with pytest.raises(ValueError, match="outside"):
+        env.step(action)
     env.step(1)
     assert not env.action_required
     assert base.actions == [0, 1]
